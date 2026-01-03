@@ -1,0 +1,187 @@
+-- Constants Schema
+-- Stores system-defined values like Base EBIT Multiple, Country Risk Factor, etc.
+
+CREATE TABLE IF NOT EXISTS constants (
+  id SERIAL PRIMARY KEY,
+  constant_type VARCHAR(100) NOT NULL, -- e.g., 'BASE_EBIT_MULTIPLE', 'COUNTRY_RISK_FACTOR', 'SIZE_ADJUSTMENT_FACTOR', 'CUSTOMER_CONCENTRATION_ADJUSTMENT'
+  constant_key VARCHAR(100) NOT NULL, -- e.g., country code, size category, industry code
+  constant_value NUMERIC(15, 4) NOT NULL, -- The actual value
+  description TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(constant_type, constant_key)
+);
+
+-- Create index for faster lookups
+CREATE INDEX IF NOT EXISTS idx_constants_type_key ON constants(constant_type, constant_key);
+
+-- User Input Schema
+-- Stores user-submitted data with references to constants
+
+CREATE TABLE IF NOT EXISTS user_input (
+  id SERIAL PRIMARY KEY,
+  industry_sector VARCHAR(255) NOT NULL,
+  country_region VARCHAR(100) NOT NULL,
+  annual_revenue NUMERIC(20, 2) NOT NULL,
+  ebit NUMERIC(20, 2) NOT NULL,
+  currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+  number_of_employees INTEGER,
+  top_3_customers_percent NUMERIC(5, 2),
+  
+  -- Foreign key references to constants
+  base_ebit_multiple_id INTEGER REFERENCES constants(id),
+  country_risk_factor_id INTEGER REFERENCES constants(id),
+  size_adjustment_factor_id INTEGER REFERENCES constants(id),
+  customer_concentration_adjustment_id INTEGER REFERENCES constants(id),
+  
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create indexes for foreign keys
+CREATE INDEX IF NOT EXISTS idx_user_input_base_ebit_multiple ON user_input(base_ebit_multiple_id);
+CREATE INDEX IF NOT EXISTS idx_user_input_country_risk_factor ON user_input(country_risk_factor_id);
+CREATE INDEX IF NOT EXISTS idx_user_input_size_adjustment ON user_input(size_adjustment_factor_id);
+CREATE INDEX IF NOT EXISTS idx_user_input_customer_concentration ON user_input(customer_concentration_adjustment_id);
+
+-- Function to update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Triggers to auto-update updated_at
+DROP TRIGGER IF EXISTS update_constants_updated_at ON constants;
+CREATE TRIGGER update_constants_updated_at BEFORE UPDATE ON constants
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_user_input_updated_at ON user_input;
+CREATE TRIGGER update_user_input_updated_at BEFORE UPDATE ON user_input
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+
+-- Company Constants Table (Mapped from specific Excel rows)
+CREATE TABLE IF NOT EXISTS company_constants (
+  id SERIAL PRIMARY KEY,
+  company_name VARCHAR(255) NOT NULL,
+  base NUMERIC(20, 4), -- Mapped from Norm EBIT
+  country VARCHAR(100), -- Mapped from Country
+  risk_factor NUMERIC(10, 4), -- Mapped from Country Risk Factor
+  size NUMERIC(10, 4), -- Mapped from Dealability (Size) subscore
+  adjustment_factor NUMERIC(10, 4), -- Mapped from Size Adjustment Factor
+  customer NUMERIC(10, 4), -- Mapped from Top-3 %
+  customer_concentration_adjustment NUMERIC(10, 4), -- Mapped from Customer Concentration Adjustment
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_company_constants_name ON company_constants(company_name);
+
+-- Company Financial Data Table (Stores all metrics)
+CREATE TABLE IF NOT EXISTS company_financial_data (
+  id SERIAL PRIMARY KEY,
+  company_name VARCHAR(255) NOT NULL,
+  
+  -- Core Info
+  sector VARCHAR(255),
+  country VARCHAR(100),
+  currency VARCHAR(10),
+  val_date DATE, 
+  employees INTEGER,
+  
+  -- Revenue & EBIT History
+  revenue_y1 NUMERIC(20, 2),
+  revenue_y2 NUMERIC(20, 2),
+  revenue_y3 NUMERIC(20, 2),
+  ebit_y1 NUMERIC(20, 2),
+  ebit_y2 NUMERIC(20, 2),
+  ebit_y3 NUMERIC(20, 2),
+  
+  -- Forecast
+  revenue_f1 NUMERIC(20, 2),
+  revenue_f2 NUMERIC(20, 2),
+  revenue_f3 NUMERIC(20, 2),
+  ebit_f1 NUMERIC(20, 2),
+  ebit_f2 NUMERIC(20, 2),
+  ebit_f3 NUMERIC(20, 2),
+  
+  -- Balance Sheet
+  total_debt NUMERIC(20, 2),
+  current_assets NUMERIC(20, 2),
+  current_liabilities NUMERIC(20, 2),
+  
+  -- Other Metrics
+  credit_rating VARCHAR(50),
+  ownership_percent NUMERIC(5, 2),
+  mgmt_turnover_percent NUMERIC(5, 2),
+  litigation TEXT, -- Yes/No
+  top_3_percent NUMERIC(5, 2),
+  founder_dep TEXT, -- Yes/No
+  supplier_dep TEXT,
+  staff_plan TEXT,
+  audited TEXT,
+  documentation TEXT,
+  flexibility TEXT,
+  timeline INTEGER,
+  fx NUMERIC(10, 4),
+  
+  -- Calculated/Historical Averages
+  rev_avg_historical NUMERIC(20, 2),
+  ebit_avg_historical NUMERIC(20, 2),
+  margin_percent NUMERIC(10, 2),
+  ebit_cagr_percent NUMERIC(10, 2),
+  volatility_percent NUMERIC(10, 2),
+  rev_cagr_percent NUMERIC(10, 2),
+  debt_ebitda NUMERIC(10, 2),
+  current_ratio NUMERIC(10, 2),
+  
+  -- Factors (Also in Constants, but raw here maybe?)
+  base_multiple_factor NUMERIC(10, 4),
+  country_risk_factor NUMERIC(10, 4),
+  size_adjustment_factor NUMERIC(10, 4),
+  customer_concentration_adjustment NUMERIC(10, 4),
+  
+  -- Valuation Outputs
+  adj_mult NUMERIC(10, 4),
+  norm_ebit NUMERIC(20, 2),
+  ev_mid NUMERIC(20, 2),
+  ev_low NUMERIC(20, 2),
+  ev_high NUMERIC(20, 2),
+  
+  -- Qualitative/Scores
+  financial_strength VARCHAR(100),
+  risk_management VARCHAR(100),
+  market_context VARCHAR(100),
+  
+  dealability_size_subscore NUMERIC(10, 2),
+  dealability_documentation_subscore NUMERIC(10, 2),
+  dealability_flexibility_subscore NUMERIC(10, 2),
+  dealability_timeline_subscore NUMERIC(10, 2),
+  dealability_score NUMERIC(10, 2),
+  
+  valuation_reliability VARCHAR(100),
+  fx_confidence VARCHAR(100),
+  peer_gap_percent NUMERIC(10, 2),
+  age_warning VARCHAR(255),
+  inst_bonus NUMERIC(10, 2),
+  risk_flags TEXT,
+  tapway_institutional_score NUMERIC(10, 2),
+  narrative TEXT,
+  
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_company_financial_data_name ON company_financial_data(company_name);
+
+-- Triggers for new tables
+DROP TRIGGER IF EXISTS update_company_constants_updated_at ON company_constants;
+CREATE TRIGGER update_company_constants_updated_at BEFORE UPDATE ON company_constants
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_company_financial_updated_at ON company_financial_data;
+CREATE TRIGGER update_company_financial_updated_at BEFORE UPDATE ON company_financial_data
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
