@@ -162,6 +162,16 @@ CREATE TABLE IF NOT EXISTS company_financial_data (
   dealability_timeline_subscore NUMERIC(10, 2),
   dealability_score NUMERIC(10, 2),
   
+  -- Additional Scores (from training datasets)
+  financial_quality NUMERIC(10, 2),
+  growth_score NUMERIC(10, 2),
+  data_completeness NUMERIC(10, 2),
+  sector_context NUMERIC(10, 2),
+  investment_attractiveness NUMERIC(10, 2),
+  tapway_score NUMERIC(10, 2),
+  valuation_range_low_percent NUMERIC(10, 2),
+  valuation_range_high_percent NUMERIC(10, 2),
+  
   valuation_reliability VARCHAR(100),
   fx_confidence VARCHAR(100),
   peer_gap_percent NUMERIC(10, 2),
