@@ -6,6 +6,7 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "db:init": "node src/scripts/initDb.js",
+    "db:seed:rbac": "node src/scripts/seedRbac.js",
     "db:seed:financials": "node src/scripts/seedFinancialDataFreeAndStandard.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -14,9 +15,13 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@casl/ability": "^6.8.0",
+    "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^7.0.12",
     "pg": "^8.16.3",
     "xlsx": "^0.18.5"
   }

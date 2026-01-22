@@ -10,11 +10,13 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Routes
+const authRoutes = require('./routes/auth');
 const constantsRoutes = require('./routes/constants');
 const userInputRoutes = require('./routes/userInput');
 const companiesRoutes = require('./routes/companies');
 const queryRoutes = require('./routes/query');
 
+app.use('/api/auth', authRoutes);
 app.use('/api/constants', constantsRoutes);
 app.use('/api/user-input', userInputRoutes);
 app.use('/api/companies', companiesRoutes);
