@@ -37,14 +37,59 @@ router.post('/signup', async (req, res) => {
       });
     }
 
-    // Check if user already exists
+    // Check if user already exists and their status
     const existingUser = await pool.query(
-      'SELECT id FROM users WHERE email = $1',
+      'SELECT id, is_active FROM users WHERE email = $1',
       [email]
     );
 
     if (existingUser.rows.length > 0) {
-      return res.status(400).json({ error: 'Email already registered' });
+      const user = existingUser.rows[0];
+      
+      // If user exists but is inactive, resend OTP and allow them to proceed to verification
+      if (user.is_active === false) {
+        // Generate new 6-digit OTP
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
+
+        // Get user details for email
+        const userDetails = await pool.query(
+          'SELECT full_name, email FROM users WHERE id = $1',
+          [user.id]
+        );
+
+        const fullName = userDetails.rows[0]?.full_name || 'User';
+
+        // Save new OTP to database
+        await pool.query(
+          `INSERT INTO otps (user_id, email, otp_code, expires_at)
+           VALUES ($1, $2, $3, $4)`,
+          [user.id, email, otpCode, expiresAt]
+        );
+
+        // Send OTP email
+        try {
+          await sendOTPEmail(email, otpCode, fullName);
+        } catch (emailError) {
+          console.error('Error sending OTP email:', emailError);
+          // Continue even if email fails
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: 'User already exists. A new OTP has been sent to your email. Please verify to continue.',
+          user: {
+            email: email,
+            isActive: false
+          },
+          requiresVerification: true
+        });
+      }
+      
+      // If user exists and is active, return error
+      return res.status(400).json({ 
+        error: 'Email already registered and verified. Please login instead.' 
+      });
     }
 
     // Hash password
@@ -121,6 +166,7 @@ router.post('/signup', async (req, res) => {
       await pool.query('COMMIT');
 
       res.status(201).json({
+        success: true,
         message: 'User created successfully. Please check your email for OTP verification.',
         user: {
           id: user.id,
@@ -491,6 +537,395 @@ router.post('/assign-role',
       });
     } catch (error) {
       console.error('Assign role error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+);
+
+/**
+ * POST /api/auth/company-profile
+ * Create or update company profile (for investor/seller users)
+ * Body: All company profile fields from the form
+ */
+router.post('/company-profile', authenticate, requireRole(['investor', 'seller']), async (req, res) => {
+  try {
+    const {
+      // Personal & Contact Information (Step 1)
+      fullName,
+      position,
+      founderManagingDirector,
+      businessEmail,
+      companyName,
+      country,
+      phone,
+      city,
+      
+      // Company Information (Step 2)
+      yearFounded,
+      legalForm,
+      industrySector,
+      numberOfEmployees,
+      
+      // Financial Overview (Step 3)
+      annualRevenue,
+      ebit,
+      currentYearEstimate,
+      currency,
+      customerConcentrationPercent,
+      growthTrend,
+      
+      // Ownership & Readiness (Step 4)
+      ownershipStructure,
+      founderSharesPercent,
+      successionPlanned,
+      currentAdvisors,
+      interestedInSale,
+      
+      // Compliance & Consent (Step 5)
+      dataUploadUrl,
+      ndaConsent,
+      gdprConsent
+    } = req.body;
+
+    // Validate required fields
+    if (!companyName) {
+      return res.status(400).json({ error: 'Company name is required' });
+    }
+
+    // Check if profile already exists for this user
+    const existingProfile = await pool.query(
+      'SELECT id FROM company_profiles WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    if (existingProfile.rows.length > 0) {
+      // Update existing profile
+      const profileId = existingProfile.rows[0].id;
+      
+      const updateResult = await pool.query(
+        `UPDATE company_profiles SET
+          full_name = $1, position = $2, founder_managing_director = $3,
+          business_email = $4, company_name = $5, country = $6, phone = $7, city = $8,
+          year_founded = $9, legal_form = $10, industry_sector = $11, number_of_employees = $12,
+          annual_revenue = $13, ebit = $14, current_year_estimate = $15, currency = $16,
+          customer_concentration_percent = $17, growth_trend = $18,
+          ownership_structure = $19, founder_shares_percent = $20, succession_planned = $21,
+          current_advisors = $22, interested_in_sale = $23,
+          data_upload_url = $24, nda_consent = $25, gdpr_consent = $26,
+          is_verified = false, verified_by = NULL, verified_at = NULL
+        WHERE id = $27
+        RETURNING *`,
+        [
+          fullName || null,
+          position || null,
+          founderManagingDirector || null,
+          businessEmail || null,
+          companyName,
+          country || null,
+          phone || null,
+          city || null,
+          yearFounded || null,
+          legalForm || null,
+          industrySector || null,
+          numberOfEmployees || null,
+          annualRevenue || null,
+          ebit || null,
+          currentYearEstimate || null,
+          currency || 'USD',
+          customerConcentrationPercent || null,
+          growthTrend || null,
+          ownershipStructure || null,
+          founderSharesPercent || null,
+          successionPlanned || null,
+          currentAdvisors || null,
+          interestedInSale || null,
+          dataUploadUrl || null,
+          ndaConsent || false,
+          gdprConsent || false,
+          profileId
+        ]
+      );
+
+      return res.json({
+        message: 'Company profile updated successfully',
+        profile: updateResult.rows[0],
+        isVerified: false
+      });
+    } else {
+      // Create new profile
+      const insertResult = await pool.query(
+        `INSERT INTO company_profiles (
+          user_id, full_name, position, founder_managing_director,
+          business_email, company_name, country, phone, city,
+          year_founded, legal_form, industry_sector, number_of_employees,
+          annual_revenue, ebit, current_year_estimate, currency,
+          customer_concentration_percent, growth_trend,
+          ownership_structure, founder_shares_percent, succession_planned,
+          current_advisors, interested_in_sale,
+          data_upload_url, nda_consent, gdpr_consent, is_verified
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+          $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
+          $25, $26, $27, $28
+        ) RETURNING *`,
+        [
+          req.user.id,
+          fullName || null,
+          position || null,
+          founderManagingDirector || null,
+          businessEmail || null,
+          companyName,
+          country || null,
+          phone || null,
+          city || null,
+          yearFounded || null,
+          legalForm || null,
+          industrySector || null,
+          numberOfEmployees || null,
+          annualRevenue || null,
+          ebit || null,
+          currentYearEstimate || null,
+          currency || 'USD',
+          customerConcentrationPercent || null,
+          growthTrend || null,
+          ownershipStructure || null,
+          founderSharesPercent || null,
+          successionPlanned || null,
+          currentAdvisors || null,
+          interestedInSale || null,
+          dataUploadUrl || null,
+          ndaConsent || false,
+          gdprConsent || false,
+          false // is_verified defaults to false
+        ]
+      );
+
+      return res.status(201).json({
+        message: 'Company profile created successfully. Awaiting verification.',
+        profile: insertResult.rows[0],
+        isVerified: false
+      });
+    }
+  } catch (error) {
+    console.error('Company profile error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /api/auth/company-profile
+ * Get current user's company profile
+ */
+router.get('/company-profile', authenticate, requireRole(['investor', 'seller']), async (req, res) => {
+  try {
+    const profileResult = await pool.query(
+      'SELECT * FROM company_profiles WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    if (profileResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Company profile not found' });
+    }
+
+    res.json({
+      profile: profileResult.rows[0]
+    });
+  } catch (error) {
+    console.error('Get company profile error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * PUT /api/auth/company-profile/verify/:id
+ * Verify company profile (superadmin only)
+ * Body: { verified: true/false }
+ */
+router.put('/company-profile/verify/:id',
+  authenticate,
+  requireRole('superadmin'),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { verified } = req.body;
+
+      if (typeof verified !== 'boolean') {
+        return res.status(400).json({ error: 'verified field must be a boolean' });
+      }
+
+      const updateResult = await pool.query(
+        `UPDATE company_profiles 
+         SET is_verified = $1, 
+             verified_by = $2,
+             verified_at = CASE WHEN $1 = true THEN NOW() ELSE NULL END
+         WHERE id = $3
+         RETURNING *`,
+        [verified, req.user.id, id]
+      );
+
+      if (updateResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Company profile not found' });
+      }
+
+      res.json({
+        message: verified ? 'Company profile verified successfully' : 'Company profile verification removed',
+        profile: updateResult.rows[0]
+      });
+    } catch (error) {
+      console.error('Verify company profile error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+);
+
+/**
+ * POST /api/auth/investor-profile
+ * Create or update investor profile (for investor users only)
+ * Body: { fullName, firmSize, primaryMarkets, investmentFocus, contactNumber }
+ */
+router.post('/investor-profile', authenticate, requireRole('investor'), async (req, res) => {
+  try {
+    const {
+      fullName,
+      firmSize,
+      primaryMarkets,
+      investmentFocus,
+      contactNumber
+    } = req.body;
+
+    // Validate required fields
+    if (!fullName) {
+      return res.status(400).json({ error: 'Full name is required' });
+    }
+
+    // Check if profile already exists for this user
+    const existingProfile = await pool.query(
+      'SELECT id FROM investor_profiles WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    if (existingProfile.rows.length > 0) {
+      // Update existing profile
+      const profileId = existingProfile.rows[0].id;
+      
+      const updateResult = await pool.query(
+        `UPDATE investor_profiles SET
+          full_name = $1,
+          firm_size = $2,
+          primary_markets = $3,
+          investment_focus = $4,
+          contact_number = $5,
+          is_verified = false,
+          verified_by = NULL,
+          verified_at = NULL
+        WHERE id = $6
+        RETURNING *`,
+        [
+          fullName,
+          firmSize || null,
+          primaryMarkets || null,
+          investmentFocus || null,
+          contactNumber || null,
+          profileId
+        ]
+      );
+
+      return res.json({
+        message: 'Investor profile updated successfully',
+        profile: updateResult.rows[0],
+        isVerified: false
+      });
+    } else {
+      // Create new profile
+      const insertResult = await pool.query(
+        `INSERT INTO investor_profiles (
+          user_id, full_name, firm_size, primary_markets,
+          investment_focus, contact_number, is_verified
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [
+          req.user.id,
+          fullName,
+          firmSize || null,
+          primaryMarkets || null,
+          investmentFocus || null,
+          contactNumber || null,
+          false // is_verified defaults to false
+        ]
+      );
+
+      return res.status(201).json({
+        message: 'Investor profile created successfully. Awaiting verification.',
+        profile: insertResult.rows[0],
+        isVerified: false
+      });
+    }
+  } catch (error) {
+    console.error('Investor profile error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /api/auth/investor-profile
+ * Get current user's investor profile
+ */
+router.get('/investor-profile', authenticate, requireRole('investor'), async (req, res) => {
+  try {
+    const profileResult = await pool.query(
+      'SELECT * FROM investor_profiles WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    if (profileResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Investor profile not found' });
+    }
+
+    res.json({
+      profile: profileResult.rows[0]
+    });
+  } catch (error) {
+    console.error('Get investor profile error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * PUT /api/auth/investor-profile/verify/:id
+ * Verify investor profile (superadmin only)
+ * Body: { verified: true/false }
+ */
+router.put('/investor-profile/verify/:id',
+  authenticate,
+  requireRole('superadmin'),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { verified } = req.body;
+
+      if (typeof verified !== 'boolean') {
+        return res.status(400).json({ error: 'verified field must be a boolean' });
+      }
+
+      const updateResult = await pool.query(
+        `UPDATE investor_profiles 
+         SET is_verified = $1, 
+             verified_by = $2,
+             verified_at = CASE WHEN $1 = true THEN NOW() ELSE NULL END
+         WHERE id = $3
+         RETURNING *`,
+        [verified, req.user.id, id]
+      );
+
+      if (updateResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Investor profile not found' });
+      }
+
+      res.json({
+        message: verified ? 'Investor profile verified successfully' : 'Investor profile verification removed',
+        profile: updateResult.rows[0]
+      });
+    } catch (error) {
+      console.error('Verify investor profile error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   }

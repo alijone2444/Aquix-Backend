@@ -2,18 +2,20 @@ const nodemailer = require('nodemailer');
 
 /**
  * Create email transporter
- * Configure with your email service (Gmail, SendGrid, etc.)
+ * Gmail SMTP Configuration:
+ * - Server: smtp.gmail.com
+ * - Port: 587 (TLS/STARTTLS) or 465 (SSL)
+ * - Username: EMAIL_USER from environment
+ * - Password: EMAIL_PASS (Gmail App Password) from environment
  */
 const createTransporter = () => {
-  // For Gmail, you can use app password
-  // For production, use services like SendGrid, AWS SES, etc.
   return nodemailer.createTransport({
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: process.env.SMTP_PORT || 587,
-    secure: false, // true for 465, false for other ports
+    port: parseInt(process.env.SMTP_PORT) || 587, // 587 for TLS/STARTTLS, 465 for SSL
+    secure: (process.env.SMTP_PORT === '465'), // true for port 465 (SSL), false for port 587 (TLS)
     auth: {
-      user: process.env.SMTP_USER || process.env.EMAIL_USER,
-      pass: process.env.SMTP_PASS || process.env.EMAIL_PASSWORD,
+      user: process.env.EMAIL_USER, // Gmail address (e.g., alijone2444@gmail.com)
+      pass: process.env.EMAIL_PASS, // Gmail App Password
     },
   });
 };
@@ -26,7 +28,7 @@ const sendOTPEmail = async (email, otpCode, fullName) => {
     const transporter = createTransporter();
 
     const mailOptions = {
-      from: process.env.EMAIL_FROM || process.env.SMTP_USER || 'noreply@aquix.com',
+      from: 'noreply@aquix.com',
       to: email,
       subject: 'Verify Your Email - OTP Code',
       html: `

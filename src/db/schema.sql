@@ -294,3 +294,93 @@ CREATE INDEX IF NOT EXISTS idx_otps_user_id ON otps(user_id);
 CREATE INDEX IF NOT EXISTS idx_otps_email ON otps(email);
 CREATE INDEX IF NOT EXISTS idx_otps_code ON otps(otp_code);
 CREATE INDEX IF NOT EXISTS idx_otps_expires_at ON otps(expires_at);
+
+-- Company Profiles Table
+-- Stores company profile information submitted by investors/sellers
+CREATE TABLE IF NOT EXISTS company_profiles (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  
+  -- Personal & Contact Information (Step 1)
+  full_name VARCHAR(255),
+  position VARCHAR(255),
+  founder_managing_director VARCHAR(255),
+  business_email VARCHAR(255),
+  company_name VARCHAR(255) NOT NULL,
+  country VARCHAR(100),
+  phone VARCHAR(50),
+  city VARCHAR(100),
+  
+  -- Company Information (Step 2)
+  year_founded INTEGER,
+  legal_form VARCHAR(50),
+  industry_sector VARCHAR(100),
+  number_of_employees INTEGER,
+  
+  -- Financial Overview (Step 3)
+  annual_revenue NUMERIC(20, 2),
+  ebit NUMERIC(20, 2),
+  current_year_estimate NUMERIC(20, 2),
+  currency VARCHAR(10) DEFAULT 'USD',
+  customer_concentration_percent NUMERIC(5, 2),
+  growth_trend VARCHAR(50),
+  
+  -- Ownership & Readiness (Step 4)
+  ownership_structure VARCHAR(100),
+  founder_shares_percent NUMERIC(5, 2),
+  succession_planned VARCHAR(10),
+  current_advisors VARCHAR(255),
+  interested_in_sale VARCHAR(255),
+  
+  -- Compliance & Consent (Step 5)
+  data_upload_url TEXT, -- URL/path to uploaded PDF or Excel file
+  nda_consent BOOLEAN DEFAULT false,
+  gdpr_consent BOOLEAN DEFAULT false,
+  
+  -- Verification
+  is_verified BOOLEAN DEFAULT false,
+  verified_by UUID REFERENCES users(id),
+  verified_at TIMESTAMP,
+  
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_company_profiles_user_id ON company_profiles(user_id);
+CREATE INDEX IF NOT EXISTS idx_company_profiles_is_verified ON company_profiles(is_verified);
+CREATE INDEX IF NOT EXISTS idx_company_profiles_company_name ON company_profiles(company_name);
+
+-- Trigger for updated_at
+DROP TRIGGER IF EXISTS update_company_profiles_updated_at ON company_profiles;
+CREATE TRIGGER update_company_profiles_updated_at BEFORE UPDATE ON company_profiles
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Investor Profiles Table
+-- Stores investor profile information submitted by investors
+CREATE TABLE IF NOT EXISTS investor_profiles (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  
+  -- Investor Information
+  full_name VARCHAR(255),
+  firm_size VARCHAR(100), -- e.g., "$10M - $50M"
+  primary_markets VARCHAR(255), -- e.g., "Europe, USA"
+  investment_focus VARCHAR(255), -- e.g., "SaaS, Healthcare"
+  contact_number VARCHAR(50),
+  
+  -- Verification
+  is_verified BOOLEAN DEFAULT false,
+  verified_by UUID REFERENCES users(id),
+  verified_at TIMESTAMP,
+  
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_investor_profiles_user_id ON investor_profiles(user_id);
+CREATE INDEX IF NOT EXISTS idx_investor_profiles_is_verified ON investor_profiles(is_verified);
+
+-- Trigger for updated_at
+DROP TRIGGER IF EXISTS update_investor_profiles_updated_at ON investor_profiles;
+CREATE TRIGGER update_investor_profiles_updated_at BEFORE UPDATE ON investor_profiles
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
