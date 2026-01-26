@@ -21,6 +21,7 @@ app.use('/api/constants', constantsRoutes);
 app.use('/api/user-input', userInputRoutes);
 app.use('/api/companies', companiesRoutes);
 app.use('/api/query', queryRoutes);
+app.use('/api/valuations', require('./routes/valuations'));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
