@@ -444,6 +444,54 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
+    // Get user roles as array of names for easier frontend use
+    const userRoles = (user.roles || []).map(role => role.name);
+    const primaryRole = userRoles[0] || null;
+
+    // Check profile completion status based on role
+    let profileStatus = {
+      hasCompanyProfile: false,
+      hasInvestorProfile: false,
+      hasInstitutionalProfile: false,
+      companyProfileVerified: false,
+      investorProfileVerified: false,
+      institutionalProfileVerified: false
+    };
+
+    // Check company profile (for seller role)
+    if (userRoles.includes('seller')) {
+      const companyProfile = await pool.query(
+        'SELECT id, is_verified FROM company_profiles WHERE user_id = $1',
+        [user.id]
+      );
+      if (companyProfile.rows.length > 0) {
+        profileStatus.hasCompanyProfile = true;
+        profileStatus.companyProfileVerified = companyProfile.rows[0].is_verified;
+      }
+    }
+
+    // Check investor profile (for investor role)
+    if (userRoles.includes('investor')) {
+      const investorProfile = await pool.query(
+        'SELECT id, is_verified FROM investor_profiles WHERE user_id = $1',
+        [user.id]
+      );
+      if (investorProfile.rows.length > 0) {
+        profileStatus.hasInvestorProfile = true;
+        profileStatus.investorProfileVerified = investorProfile.rows[0].is_verified;
+      }
+
+      // Check institutional profile (for investor role)
+      const institutionalProfile = await pool.query(
+        'SELECT id, is_verified FROM institutional_profiles WHERE user_id = $1',
+        [user.id]
+      );
+      if (institutionalProfile.rows.length > 0) {
+        profileStatus.hasInstitutionalProfile = true;
+        profileStatus.institutionalProfileVerified = institutionalProfile.rows[0].is_verified;
+      }
+    }
+
     // Generate JWT token
     const token = jwt.sign(
       { userId: user.id, email: user.email },
@@ -452,16 +500,21 @@ router.post('/login', async (req, res) => {
     );
 
     res.json({
+      success: true,
       message: 'Login successful',
+      token,
       user: {
         id: user.id,
         fullName: user.full_name,
         email: user.email,
         company: user.company,
+        isActive: user.is_active,
         roles: user.roles || [],
+        roleNames: userRoles,
+        primaryRole: primaryRole,
         permissions: user.permissions || []
       },
-      token
+      profileStatus: profileStatus
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -926,6 +979,218 @@ router.put('/investor-profile/verify/:id',
       });
     } catch (error) {
       console.error('Verify investor profile error:', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+);
+
+/**
+ * POST /api/auth/institutional-profile
+ * Create or update institutional profile (for investor users only)
+ * Body: All institutional profile fields from the form
+ */
+router.post('/institutional-profile', authenticate, requireRole('investor'), async (req, res) => {
+  try {
+    const {
+      // Basic Information (Step 1)
+      fullName,
+      companyWebsite,
+      businessEmail,
+      countryOfRegistration,
+      companyFundName,
+      officeLocationCity,
+      
+      // Investment Profile (Step 2)
+      typeOfInstitution,
+      targetCompanySize,
+      assetsUnderManagement,
+      preferredRegions,
+      typicalDealTicketSize,
+      dealStagePreference,
+      sectorsOfInterest,
+      
+      // Verification & Compliance (Step 3)
+      fundDocumentUrl,
+      websiteReference,
+      additionalMessage,
+      ndaConsent
+    } = req.body;
+
+    // Validate required fields
+    if (!fullName || !companyFundName) {
+      return res.status(400).json({ 
+        error: 'Full name and company/fund name are required' 
+      });
+    }
+
+    // Check if profile already exists for this user
+    const existingProfile = await pool.query(
+      'SELECT id FROM institutional_profiles WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    if (existingProfile.rows.length > 0) {
+      // Update existing profile
+      const profileId = existingProfile.rows[0].id;
+      
+      const updateResult = await pool.query(
+        `UPDATE institutional_profiles SET
+          full_name = $1,
+          company_website = $2,
+          business_email = $3,
+          country_of_registration = $4,
+          company_fund_name = $5,
+          office_location_city = $6,
+          type_of_institution = $7,
+          target_company_size = $8,
+          assets_under_management = $9,
+          preferred_regions = $10,
+          typical_deal_ticket_size = $11,
+          deal_stage_preference = $12,
+          sectors_of_interest = $13,
+          fund_document_url = $14,
+          website_reference = $15,
+          additional_message = $16,
+          nda_consent = $17,
+          is_verified = false,
+          verified_by = NULL,
+          verified_at = NULL
+        WHERE id = $18
+        RETURNING *`,
+        [
+          fullName,
+          companyWebsite || null,
+          businessEmail || null,
+          countryOfRegistration || null,
+          companyFundName,
+          officeLocationCity || null,
+          typeOfInstitution || null,
+          targetCompanySize || null,
+          assetsUnderManagement || null,
+          preferredRegions || null,
+          typicalDealTicketSize || null,
+          dealStagePreference || null,
+          sectorsOfInterest || null,
+          fundDocumentUrl || null,
+          websiteReference || null,
+          additionalMessage || null,
+          ndaConsent || false,
+          profileId
+        ]
+      );
+
+      return res.json({
+        message: 'Institutional profile updated successfully',
+        profile: updateResult.rows[0],
+        isVerified: false
+      });
+    } else {
+      // Create new profile
+      const insertResult = await pool.query(
+        `INSERT INTO institutional_profiles (
+          user_id, full_name, company_website, business_email,
+          country_of_registration, company_fund_name, office_location_city,
+          type_of_institution, target_company_size, assets_under_management,
+          preferred_regions, typical_deal_ticket_size, deal_stage_preference,
+          sectors_of_interest, fund_document_url, website_reference,
+          additional_message, nda_consent, is_verified
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`,
+        [
+          req.user.id,
+          fullName,
+          companyWebsite || null,
+          businessEmail || null,
+          countryOfRegistration || null,
+          companyFundName,
+          officeLocationCity || null,
+          typeOfInstitution || null,
+          targetCompanySize || null,
+          assetsUnderManagement || null,
+          preferredRegions || null,
+          typicalDealTicketSize || null,
+          dealStagePreference || null,
+          sectorsOfInterest || null,
+          fundDocumentUrl || null,
+          websiteReference || null,
+          additionalMessage || null,
+          ndaConsent || false,
+          false // is_verified defaults to false
+        ]
+      );
+
+      return res.status(201).json({
+        message: 'Institutional profile created successfully. Awaiting verification.',
+        profile: insertResult.rows[0],
+        isVerified: false
+      });
+    }
+  } catch (error) {
+    console.error('Institutional profile error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /api/auth/institutional-profile
+ * Get current user's institutional profile
+ */
+router.get('/institutional-profile', authenticate, requireRole('investor'), async (req, res) => {
+  try {
+    const profileResult = await pool.query(
+      'SELECT * FROM institutional_profiles WHERE user_id = $1',
+      [req.user.id]
+    );
+
+    if (profileResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Institutional profile not found' });
+    }
+
+    res.json({
+      profile: profileResult.rows[0]
+    });
+  } catch (error) {
+    console.error('Get institutional profile error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * PUT /api/auth/institutional-profile/verify/:id
+ * Verify institutional profile (superadmin only)
+ * Body: { verified: true/false }
+ */
+router.put('/institutional-profile/verify/:id',
+  authenticate,
+  requireRole('superadmin'),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { verified } = req.body;
+
+      if (typeof verified !== 'boolean') {
+        return res.status(400).json({ error: 'verified field must be a boolean' });
+      }
+
+      const updateResult = await pool.query(
+        `UPDATE institutional_profiles 
+         SET is_verified = $1, 
+             verified_by = $2,
+             verified_at = CASE WHEN $1 = true THEN NOW() ELSE NULL END
+         WHERE id = $3
+         RETURNING *`,
+        [verified, req.user.id, id]
+      );
+
+      if (updateResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Institutional profile not found' });
+      }
+
+      res.json({
+        message: verified ? 'Institutional profile verified successfully' : 'Institutional profile verification removed',
+        profile: updateResult.rows[0]
+      });
+    } catch (error) {
+      console.error('Verify institutional profile error:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   }

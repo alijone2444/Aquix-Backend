@@ -384,3 +384,50 @@ CREATE INDEX IF NOT EXISTS idx_investor_profiles_is_verified ON investor_profile
 DROP TRIGGER IF EXISTS update_investor_profiles_updated_at ON investor_profiles;
 CREATE TRIGGER update_investor_profiles_updated_at BEFORE UPDATE ON investor_profiles
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Institutional Profiles Table
+-- Stores detailed institutional information for investors
+CREATE TABLE IF NOT EXISTS institutional_profiles (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  
+  -- Basic Information (Step 1)
+  full_name VARCHAR(255),
+  company_website VARCHAR(255),
+  business_email VARCHAR(255),
+  country_of_registration VARCHAR(100),
+  company_fund_name VARCHAR(255),
+  office_location_city VARCHAR(100),
+  
+  -- Investment Profile (Step 2)
+  type_of_institution VARCHAR(100), -- e.g., "Private Equity", "Family Office", "Venture Fund"
+  target_company_size VARCHAR(100), -- e.g., "€10–50M", "€50M+"
+  assets_under_management VARCHAR(100), -- e.g., "€10–50M", "€50M+"
+  preferred_regions VARCHAR(255), -- e.g., "Western Europe", "North America"
+  typical_deal_ticket_size VARCHAR(100), -- e.g., "€5–20M", "€20M+"
+  deal_stage_preference VARCHAR(50), -- e.g., "Minority", "Majority"
+  sectors_of_interest VARCHAR(255), -- e.g., "Industrial", "Fintech", "Healthcare"
+  
+  -- Verification & Compliance (Step 3)
+  fund_document_url TEXT, -- URL/path to uploaded PDF
+  website_reference VARCHAR(255),
+  additional_message TEXT,
+  nda_consent BOOLEAN DEFAULT false,
+  
+  -- Verification
+  is_verified BOOLEAN DEFAULT false,
+  verified_by UUID REFERENCES users(id),
+  verified_at TIMESTAMP,
+  
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_institutional_profiles_user_id ON institutional_profiles(user_id);
+CREATE INDEX IF NOT EXISTS idx_institutional_profiles_is_verified ON institutional_profiles(is_verified);
+CREATE INDEX IF NOT EXISTS idx_institutional_profiles_company_fund_name ON institutional_profiles(company_fund_name);
+
+-- Trigger for updated_at
+DROP TRIGGER IF EXISTS update_institutional_profiles_updated_at ON institutional_profiles;
+CREATE TRIGGER update_institutional_profiles_updated_at BEFORE UPDATE ON institutional_profiles
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

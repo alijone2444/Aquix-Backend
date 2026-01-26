@@ -7,6 +7,7 @@
     "dev": "nodemon src/server.js",
     "db:init": "node src/scripts/initDb.js",
     "db:seed:rbac": "node src/scripts/seedRbac.js",
+    "db:seed:superadmin": "node src/scripts/seedSuperadmin.js",
     "db:seed:financials": "node src/scripts/seedFinancialDataFreeAndStandard.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
