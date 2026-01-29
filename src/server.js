@@ -11,12 +11,14 @@ app.use(express.urlencoded({ extended: true }));
 
 // Routes
 const authRoutes = require('./routes/auth');
+const adminRoutes = require('./routes/admin');
 const constantsRoutes = require('./routes/constants');
 const userInputRoutes = require('./routes/userInput');
 const companiesRoutes = require('./routes/companies');
 const queryRoutes = require('./routes/query');
 
 app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/constants', constantsRoutes);
 app.use('/api/user-input', userInputRoutes);
 app.use('/api/companies', companiesRoutes);
