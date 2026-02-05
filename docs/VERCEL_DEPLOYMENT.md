@@ -74,15 +74,33 @@ The project is configured for Vercel with:
 
 You need to set these environment variables in Vercel:
 
-- `DATABASE_URL` - Your Neon PostgreSQL connection string
+### Required Variables:
+
+- `DATABASE_URL` - Your PostgreSQL connection string (Neon, Supabase, etc.)
   ```
-  postgresql://neondb_owner:npg_dv5xH2VfFAgJ@ep-floral-surf-a4a6j6xp-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require
+  postgresql://user:password@host:port/database?sslmode=require
   ```
 
-To set environment variables:
+- `JWT_SECRET` - Secret key for JWT token signing and verification
+  ```
+  Generate a strong random string (e.g., use: openssl rand -base64 32)
+  ```
+
+### Optional Variables (for email functionality):
+
+- `SMTP_HOST` - SMTP server host (default: smtp.gmail.com)
+- `SMTP_PORT` - SMTP port (default: 587)
+- `EMAIL_USER` - Email address for sending emails
+- `EMAIL_PASS` - Email password or app password (for Gmail, use App Password)
+
+### Setting Environment Variables:
+
 1. Go to your project in Vercel dashboard
 2. Settings → Environment Variables
-3. Add each variable for all environments
+3. Add each variable for all environments (Production, Preview, Development)
+4. Click "Save" after adding each variable
+
+**Important:** Make sure to add `JWT_SECRET` with a strong random value for production!
 
 ## API Endpoints
 
