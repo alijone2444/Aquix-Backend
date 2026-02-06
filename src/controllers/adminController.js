@@ -202,29 +202,14 @@ const getUserManagement = async (req, res) => {
 };
 
 /**
- * Get all investors with unverified profiles (investorProfile and/or institutionalProfile)
- * Returns only investors whose profiles are NOT verified (is_verified = false)
+ * Get all investors with complete data (institutional profiles)
+ * Returns investors who have institutional profiles (complete data) regardless of verification status
+ * This includes both investor profiles and institutional profiles for processing on frontend
  */
 const getInvestors = async (req, res) => {
   try {
-    // Fetch investors who have unverified investor_profiles
-    const investorsResult = await pool.query(
-      `SELECT 
-        ip.*,
-        u.id as user_id,
-        u.full_name as user_full_name,
-        u.email as user_email,
-        u.company as user_company,
-        u.is_active as user_is_active,
-        u.created_at as user_created_at,
-        u.updated_at as user_updated_at
-      FROM investor_profiles ip
-      JOIN users u ON ip.user_id = u.id
-      WHERE ip.is_verified = false
-      ORDER BY ip.created_at DESC`
-    );
-
-    // Fetch investors who have unverified institutional_profiles
+    // Fetch all investors who have institutional profiles (complete data)
+    // This is the main requirement - investors must have institutional profiles
     const institutionalInvestorsResult = await pool.query(
       `SELECT 
         inst.*,
@@ -237,100 +222,107 @@ const getInvestors = async (req, res) => {
         u.updated_at as user_updated_at
       FROM institutional_profiles inst
       JOIN users u ON inst.user_id = u.id
-      WHERE inst.is_verified = false
+      JOIN user_roles ur ON u.id = ur.user_id
+      JOIN roles r ON ur.role_id = r.id
+      WHERE r.name = 'investor'
       ORDER BY inst.created_at DESC`
     );
+
+    // Get user IDs of investors with institutional profiles
+    const investorUserIds = institutionalInvestorsResult.rows.map(row => row.user_id);
+
+    // Fetch investor_profiles for these users (if they exist)
+    let investorsProfilesResult = { rows: [] };
+    if (investorUserIds.length > 0) {
+      investorsProfilesResult = await pool.query(
+        `SELECT 
+          ip.*,
+          u.id as user_id,
+          u.full_name as user_full_name,
+          u.email as user_email,
+          u.company as user_company,
+          u.is_active as user_is_active,
+          u.created_at as user_created_at,
+          u.updated_at as user_updated_at
+        FROM investor_profiles ip
+        JOIN users u ON ip.user_id = u.id
+        WHERE ip.user_id = ANY($1::uuid[])
+        ORDER BY ip.created_at DESC`,
+        [investorUserIds]
+      );
+    }
 
     // Create a map to combine investors with their profiles
     const investorsMap = new Map();
 
-    // Process investor_profiles (only unverified)
-    investorsResult.rows.forEach(row => {
-      const userId = row.user_id;
-      
-      if (!investorsMap.has(userId)) {
-        investorsMap.set(userId, {
-          user: {
-            id: row.user_id,
-            fullName: row.user_full_name,
-            email: row.user_email,
-            company: row.user_company,
-            isActive: row.user_is_active,
-            profileImageUrl: null, // Optional field - column doesn't exist yet
-            createdAt: row.user_created_at,
-            updatedAt: row.user_updated_at
-          },
-          investorProfile: null,
-          institutionalProfile: null
-        });
-      }
-
-      investorsMap.get(userId).investorProfile = {
-        id: row.id,
-        userId: row.user_id,
-        fullName: row.full_name,
-        firmSize: row.firm_size,
-        primaryMarkets: row.primary_markets,
-        investmentFocus: row.investment_focus,
-        contactNumber: row.contact_number,
-        isVerified: row.is_verified,
-        verifiedBy: row.verified_by,
-        verifiedAt: row.verified_at,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at
-      };
-    });
-
-    // Process institutional_profiles (only unverified) and merge with existing investors
+    // Process institutional_profiles first (these are required - complete data)
     institutionalInvestorsResult.rows.forEach(row => {
       const userId = row.user_id;
       
-      if (!investorsMap.has(userId)) {
-        investorsMap.set(userId, {
-          user: {
-            id: row.user_id,
-            fullName: row.user_full_name,
-            email: row.user_email,
-            company: row.user_company,
-            isActive: row.user_is_active,
-            profileImageUrl: null, // Optional field - column doesn't exist yet
-            createdAt: row.user_created_at,
-            updatedAt: row.user_updated_at
-          },
-          investorProfile: null,
-          institutionalProfile: null
-        });
-      }
-
-      investorsMap.get(userId).institutionalProfile = {
-        id: row.id,
-        userId: row.user_id,
-        fullName: row.full_name,
-        companyWebsite: row.company_website,
-        businessEmail: row.business_email,
-        countryOfRegistration: row.country_of_registration,
-        companyFundName: row.company_fund_name,
-        officeLocationCity: row.office_location_city,
-        typeOfInstitution: row.type_of_institution,
-        targetCompanySize: row.target_company_size,
-        assetsUnderManagement: row.assets_under_management,
-        preferredRegions: row.preferred_regions,
-        typicalDealTicketSize: row.typical_deal_ticket_size,
-        dealStagePreference: row.deal_stage_preference,
-        sectorsOfInterest: row.sectors_of_interest,
-        fundDocumentUrl: row.fund_document_url,
-        websiteReference: row.website_reference,
-        additionalMessage: row.additional_message,
-        ndaConsent: row.nda_consent,
-        isVerified: row.is_verified,
-        verifiedBy: row.verified_by,
-        verifiedAt: row.verified_at,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at
-      };
+      investorsMap.set(userId, {
+        user: {
+          id: row.user_id,
+          fullName: row.user_full_name,
+          email: row.user_email,
+          company: row.user_company,
+          isActive: row.user_is_active,
+          profileImageUrl: null, // Optional field - column doesn't exist yet
+          createdAt: row.user_created_at,
+          updatedAt: row.user_updated_at
+        },
+        investorProfile: null,
+        institutionalProfile: {
+          id: row.id,
+          userId: row.user_id,
+          fullName: row.full_name,
+          companyWebsite: row.company_website,
+          businessEmail: row.business_email,
+          countryOfRegistration: row.country_of_registration,
+          companyFundName: row.company_fund_name,
+          officeLocationCity: row.office_location_city,
+          typeOfInstitution: row.type_of_institution,
+          targetCompanySize: row.target_company_size,
+          assetsUnderManagement: row.assets_under_management,
+          preferredRegions: row.preferred_regions,
+          typicalDealTicketSize: row.typical_deal_ticket_size,
+          dealStagePreference: row.deal_stage_preference,
+          sectorsOfInterest: row.sectors_of_interest,
+          fundDocumentUrl: row.fund_document_url,
+          websiteReference: row.website_reference,
+          additionalMessage: row.additional_message,
+          ndaConsent: row.nda_consent,
+          isVerified: row.is_verified,
+          verifiedBy: row.verified_by,
+          verifiedAt: row.verified_at,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at
+        }
+      });
     });
 
-    // Convert map to array - only include investors who have at least one unverified profile
+    // Process investor_profiles and merge with existing investors
+    investorsProfilesResult.rows.forEach(row => {
+      const userId = row.user_id;
+      
+      if (investorsMap.has(userId)) {
+        investorsMap.get(userId).investorProfile = {
+          id: row.id,
+          userId: row.user_id,
+          fullName: row.full_name,
+          firmSize: row.firm_size,
+          primaryMarkets: row.primary_markets,
+          investmentFocus: row.investment_focus,
+          contactNumber: row.contact_number,
+          isVerified: row.is_verified,
+          verifiedBy: row.verified_by,
+          verifiedAt: row.verified_at,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at
+        };
+      }
+    });
+
+    // Convert map to array - only investors with institutional profiles (complete data)
     const investors = Array.from(investorsMap.values());
 
     res.json({
@@ -338,7 +330,8 @@ const getInvestors = async (req, res) => {
       data: {
         investors
       },
-      count: investors.length
+      count: investors.length,
+      message: 'Returns all investors with complete data (institutional profiles)'
     });
   } catch (error) {
     console.error('Get investors error:', error);
@@ -484,9 +477,135 @@ const deleteUser = async (req, res) => {
   }
 };
 
+/**
+ * Bulk Approve/Deny Investors - Approve or deny multiple investors' profiles
+ * Accepts an array of user IDs with actions (true = approve, false = deny)
+ * Updates both investor_profiles and institutional_profiles
+ * Body: { approvals: [{ userId: UUID, action: boolean }, ...] }
+ */
+const bulkApproveInvestors = async (req, res) => {
+  try {
+    const { approvals } = req.body;
+
+    // Validate input
+    if (!approvals || !Array.isArray(approvals) || approvals.length === 0) {
+      return res.status(400).json({ 
+        error: 'approvals array is required and must not be empty' 
+      });
+    }
+
+    // Validate each approval object
+    for (const approval of approvals) {
+      if (!approval.userId) {
+        return res.status(400).json({ 
+          error: 'Each approval must have a userId field' 
+        });
+      }
+      
+      // Convert action to boolean (handle 1/0, true/false, "true"/"false")
+      if (approval.action === undefined || approval.action === null) {
+        return res.status(400).json({ 
+          error: 'Each approval must have an action field (true/false or 1/0)' 
+        });
+      }
+    }
+
+    const verifierId = req.user.id;
+    const results = {
+      successful: [],
+      failed: [],
+      notFound: []
+    };
+
+    // Start transaction
+    await pool.query('BEGIN');
+
+    try {
+      for (const approval of approvals) {
+        const { userId, action } = approval;
+        
+        // Convert action to boolean (handle 1/0, true/false, "true"/"false")
+        const isVerified = action === true || action === 1 || action === 'true' || action === '1';
+        
+        try {
+          // Update institutional_profiles (required for investors with complete data)
+          const institutionalUpdateResult = await pool.query(
+            `UPDATE institutional_profiles 
+             SET is_verified = $1, 
+                 verified_by = $2,
+                 verified_at = CASE WHEN $1 = true THEN NOW() ELSE NULL END
+             WHERE user_id = $3
+             RETURNING id, user_id, is_verified`,
+            [isVerified, verifierId, userId]
+          );
+
+          // Update investor_profiles (if exists)
+          const investorUpdateResult = await pool.query(
+            `UPDATE investor_profiles 
+             SET is_verified = $1, 
+                 verified_by = $2,
+                 verified_at = CASE WHEN $1 = true THEN NOW() ELSE NULL END
+             WHERE user_id = $3
+             RETURNING id, user_id, is_verified`,
+            [isVerified, verifierId, userId]
+          );
+
+          // Check if at least one profile was updated
+          if (institutionalUpdateResult.rows.length === 0 && investorUpdateResult.rows.length === 0) {
+            results.notFound.push({
+              userId,
+              action: isVerified,
+              reason: 'No profiles found for this user'
+            });
+          } else {
+            results.successful.push({
+              userId,
+              action: isVerified,
+              institutionalProfileUpdated: institutionalUpdateResult.rows.length > 0,
+              investorProfileUpdated: investorUpdateResult.rows.length > 0
+            });
+          }
+        } catch (error) {
+          console.error(`Error updating profiles for user ${userId}:`, error);
+          results.failed.push({
+            userId,
+            action: isVerified,
+            error: error.message
+          });
+        }
+      }
+
+      await pool.query('COMMIT');
+
+      res.json({
+        success: true,
+        message: `Processed ${approvals.length} approval(s)`,
+        results: {
+          total: approvals.length,
+          successful: results.successful.length,
+          failed: results.failed.length,
+          notFound: results.notFound.length,
+          details: {
+            successful: results.successful,
+            failed: results.failed,
+            notFound: results.notFound
+          }
+        }
+      });
+    } catch (error) {
+      await pool.query('ROLLBACK');
+      throw error;
+    }
+  } catch (error) {
+    console.error('Bulk approve investors error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 module.exports = {
   getUserManagement,
   getInvestors,
-  deleteUser
+  deleteUser,
+  bulkApproveInvestors
 };
 

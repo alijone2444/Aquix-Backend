@@ -441,7 +441,7 @@ const login = async (req, res) => {
       institutionalProfileVerified: false
     };
 
-    // Check company profile (for seller role)
+    // Check company profile (for seller role) - REQUIRED FOR LOGIN
     if (userRoles.includes('seller')) {
       const companyProfile = await pool.query(
         'SELECT id, is_verified FROM company_profiles WHERE user_id = $1',
@@ -450,21 +450,30 @@ const login = async (req, res) => {
       if (companyProfile.rows.length > 0) {
         profileStatus.hasCompanyProfile = true;
         profileStatus.companyProfileVerified = companyProfile.rows[0].is_verified;
+        
+        // Block login if company profile is not verified
+        if (!companyProfile.rows[0].is_verified) {
+          return res.status(403).json({ 
+            error: 'Profile not verified', 
+            message: 'Your company profile must be verified by an administrator before you can access the seller dashboard.',
+            requiresVerification: true,
+            profileType: 'company'
+          });
+        }
+      } else {
+        // Block login if seller doesn't have a company profile
+        return res.status(403).json({ 
+          error: 'Profile incomplete', 
+          message: 'Please complete your company profile before logging in.',
+          requiresProfile: true,
+          profileType: 'company'
+        });
       }
     }
 
-    // Check investor profile (for investor role)
+    // Check institutional profile (for investor role) - REQUIRED FOR LOGIN
     if (userRoles.includes('investor')) {
-      const investorProfile = await pool.query(
-        'SELECT id, is_verified FROM investor_profiles WHERE user_id = $1',
-        [user.id]
-      );
-      if (investorProfile.rows.length > 0) {
-        profileStatus.hasInvestorProfile = true;
-        profileStatus.investorProfileVerified = investorProfile.rows[0].is_verified;
-      }
-
-      // Check institutional profile (for investor role)
+      // Check institutional profile first (required for investors)
       const institutionalProfile = await pool.query(
         'SELECT id, is_verified FROM institutional_profiles WHERE user_id = $1',
         [user.id]
@@ -472,6 +481,34 @@ const login = async (req, res) => {
       if (institutionalProfile.rows.length > 0) {
         profileStatus.hasInstitutionalProfile = true;
         profileStatus.institutionalProfileVerified = institutionalProfile.rows[0].is_verified;
+        
+        // Block login if institutional profile is not verified
+        if (!institutionalProfile.rows[0].is_verified) {
+          return res.status(403).json({ 
+            error: 'Profile not verified', 
+            message: 'Your institutional profile must be verified by an administrator before you can access the investor dashboard.',
+            requiresVerification: true,
+            profileType: 'institutional'
+          });
+        }
+      } else {
+        // Block login if investor doesn't have an institutional profile
+        return res.status(403).json({ 
+          error: 'Profile incomplete', 
+          message: 'Please complete your institutional profile before logging in.',
+          requiresProfile: true,
+          profileType: 'institutional'
+        });
+      }
+
+      // Check investor profile (optional, but track if exists)
+      const investorProfile = await pool.query(
+        'SELECT id, is_verified FROM investor_profiles WHERE user_id = $1',
+        [user.id]
+      );
+      if (investorProfile.rows.length > 0) {
+        profileStatus.hasInvestorProfile = true;
+        profileStatus.investorProfileVerified = investorProfile.rows[0].is_verified;
       }
     }
 

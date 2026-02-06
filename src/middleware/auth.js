@@ -79,9 +79,84 @@ const authenticate = async (req, res, next) => {
   }
 };
 
+/**
+ * Profile Verification Middleware
+ * Ensures that investors have verified institutional profiles
+ * and sellers have verified company profiles before accessing protected routes
+ * 
+ * Usage: Add after authenticate middleware
+ * router.get('/dashboard', authenticate, requireProfileVerification, handler);
+ */
+const requireProfileVerification = async (req, res, next) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
 
+    const userRoles = req.user.roles.map(role => role.name);
+
+    // Check seller profile verification
+    if (userRoles.includes('seller')) {
+      const companyProfile = await pool.query(
+        'SELECT id, is_verified FROM company_profiles WHERE user_id = $1',
+        [req.user.id]
+      );
+
+      if (companyProfile.rows.length === 0) {
+        return res.status(403).json({ 
+          error: 'Profile incomplete', 
+          message: 'Please complete your company profile before accessing the seller dashboard.',
+          requiresProfile: true,
+          profileType: 'company'
+        });
+      }
+
+      if (!companyProfile.rows[0].is_verified) {
+        return res.status(403).json({ 
+          error: 'Profile not verified', 
+          message: 'Your company profile must be verified by an administrator before you can access the seller dashboard.',
+          requiresVerification: true,
+          profileType: 'company'
+        });
+      }
+    }
+
+    // Check investor profile verification
+    if (userRoles.includes('investor')) {
+      const institutionalProfile = await pool.query(
+        'SELECT id, is_verified FROM institutional_profiles WHERE user_id = $1',
+        [req.user.id]
+      );
+
+      if (institutionalProfile.rows.length === 0) {
+        return res.status(403).json({ 
+          error: 'Profile incomplete', 
+          message: 'Please complete your institutional profile before accessing the investor dashboard.',
+          requiresProfile: true,
+          profileType: 'institutional'
+        });
+      }
+
+      if (!institutionalProfile.rows[0].is_verified) {
+        return res.status(403).json({ 
+          error: 'Profile not verified', 
+          message: 'Your institutional profile must be verified by an administrator before you can access the investor dashboard.',
+          requiresVerification: true,
+          profileType: 'institutional'
+        });
+      }
+    }
+
+    // Admins and superadmins bypass profile verification
+    next();
+  } catch (error) {
+    console.error('Profile verification middleware error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
 
 module.exports = {
-  authenticate
+  authenticate,
+  requireProfileVerification
 };
 
