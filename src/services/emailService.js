@@ -9,6 +9,12 @@ const nodemailer = require('nodemailer');
  * - Password: EMAIL_PASS (Gmail App Password) from environment
  */
 const createTransporter = () => {
+  // Check if email credentials are configured
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    console.error('Email credentials not configured! EMAIL_USER or EMAIL_PASS is missing.');
+    throw new Error('Email service not configured. Please set EMAIL_USER and EMAIL_PASS environment variables.');
+  }
+
   return nodemailer.createTransport({
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
     port: parseInt(process.env.SMTP_PORT) || 587, // 587 for TLS/STARTTLS, 465 for SSL
@@ -69,8 +75,67 @@ const sendOTPEmail = async (email, otpCode, fullName) => {
   }
 };
 
+/**
+ * Send Password Reset OTP email
+ */
+const sendPasswordResetEmail = async (email, otpCode, fullName) => {
+  try {
+    console.log('sendPasswordResetEmail called with:', { email, otpCode, fullName });
+    console.log('Email config check:', {
+      SMTP_HOST: process.env.SMTP_HOST,
+      SMTP_PORT: process.env.SMTP_PORT,
+      EMAIL_USER: process.env.EMAIL_USER ? 'SET' : 'NOT SET',
+      EMAIL_PASS: process.env.EMAIL_PASS ? 'SET' : 'NOT SET'
+    });
+    
+    const transporter = createTransporter();
+    console.log('Transporter created successfully');
+
+    const mailOptions = {
+      from: 'noreply@aquix.com',
+      to: email,
+      subject: 'Password Reset - OTP Code',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Password Reset Request</h2>
+          <p>Hello ${fullName || 'User'},</p>
+          <p>We received a request to reset your password. Please use the following OTP code to reset your password:</p>
+          <div style="background-color: #f4f4f4; padding: 20px; text-align: center; margin: 20px 0;">
+            <h1 style="color: #dc3545; font-size: 32px; margin: 0; letter-spacing: 5px;">${otpCode}</h1>
+          </div>
+          <p>This OTP will expire in 10 minutes.</p>
+          <p><strong>If you didn't request a password reset, please ignore this email. Your password will remain unchanged.</strong></p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+          <p style="color: #666; font-size: 12px;">This is an automated email, please do not reply.</p>
+        </div>
+      `,
+      text: `
+        Password Reset Request
+        
+        Hello ${fullName || 'User'},
+        
+        We received a request to reset your password. Please use the following OTP code to reset your password:
+        
+        OTP Code: ${otpCode}
+        
+        This OTP will expire in 10 minutes.
+        
+        If you didn't request a password reset, please ignore this email. Your password will remain unchanged.
+      `,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Password reset email sent:', info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error('Error sending password reset email:', error);
+    throw error;
+  }
+};
+
 module.exports = {
   sendOTPEmail,
+  sendPasswordResetEmail,
   createTransporter,
 };
 

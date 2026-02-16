@@ -1,7 +1,7 @@
 const express = require('express');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/authorize');
-const { getUserManagement, getInvestors, deleteUser, bulkApproveInvestors } = require('../controllers/adminController');
+const { getUserManagement, getInvestors, deleteUser, bulkApproveUsers } = require('../controllers/adminController');
 
 const router = express.Router();
 
@@ -23,8 +23,9 @@ router.get('/user-management', getUserManagement);
 router.get('/investors', getInvestors);
 
 /**
- * POST /api/admin/investors/bulk-approve
- * Bulk approve or deny investors' profiles
+ * POST /api/admin/users/bulk-approve
+ * Bulk approve or deny users' profiles (investors or sellers)
+ * Automatically detects user type and updates appropriate profiles
  * Body: { 
  *   approvals: [
  *     { userId: UUID, action: true/false or 1/0 },
@@ -33,10 +34,12 @@ router.get('/investors', getInvestors);
  * }
  * - action: true or 1 = approve (set is_verified = true)
  * - action: false or 0 = deny (set is_verified = false)
- * Updates both investor_profiles and institutional_profiles
+ * 
+ * For investors: Updates institutional_profiles and investor_profiles
+ * For sellers: Updates company_profiles
  * Sets verified_by to current logged-in admin user
  */
-router.post('/investors/bulk-approve', bulkApproveInvestors);
+router.post('/users/bulk-approve', bulkApproveUsers);
 
 /**
  * DELETE /api/admin/user

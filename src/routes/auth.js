@@ -16,7 +16,9 @@ const {
   verifyInvestorProfile,
   createInstitutionalProfile,
   getInstitutionalProfile,
-  verifyInstitutionalProfile
+  verifyInstitutionalProfile,
+  forgotPassword,
+  resetPassword
 } = require('../controllers/authController');
 
 const router = express.Router();
@@ -48,6 +50,20 @@ router.post('/resend-otp', resendOtp);
  * Body: { email, password }
  */
 router.post('/login', login);
+
+/**
+ * POST /api/auth/forgot-password
+ * Request password reset OTP
+ * Body: { email }
+ */
+router.post('/forgot-password', forgotPassword);
+
+/**
+ * POST /api/auth/reset-password
+ * Reset password using OTP
+ * Body: { email, otp, newPassword }
+ */
+router.post('/reset-password', resetPassword);
 
 /**
  * GET /api/auth/me

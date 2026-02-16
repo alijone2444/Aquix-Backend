@@ -1,7 +1,7 @@
 ﻿const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
-const { sendOTPEmail } = require('../services/emailService');
+const { sendOTPEmail, sendPasswordResetEmail } = require('../services/emailService');
 
 /**
  * Signup - Register a new user
@@ -1181,6 +1181,198 @@ const verifyInstitutionalProfile = async (req, res) => {
   }
 };
 
+/**
+ * Forgot Password - Request password reset OTP
+ * Sends a password reset OTP to the user's email
+ */
+const forgotPassword = async (req, res) => {
+  try {
+    console.log('Forgot password request received:', req.body);
+    const { email } = req.body;
+
+    // Validate email
+    if (!email) {
+      console.log('Email validation failed: email is missing');
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      console.log('Email validation failed: invalid format');
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+
+    console.log('Checking if user exists for email:', email);
+    // Check if user exists
+    const userResult = await pool.query(
+      'SELECT id, full_name, email, is_active FROM users WHERE email = $1',
+      [email]
+    );
+
+    if (userResult.rows.length === 0) {
+      console.log('User not found for email:', email);
+      // Don't reveal if email exists or not (security best practice)
+      return res.status(200).json({
+        success: true,
+        message: 'If an account with that email exists, a password reset OTP has been sent.'
+      });
+    }
+
+    const user = userResult.rows[0];
+    console.log('User found:', { id: user.id, email: user.email, is_active: user.is_active });
+
+    // Check if user account is active
+    if (!user.is_active) {
+      console.log('User account is not active');
+      return res.status(403).json({
+        error: 'Account not verified',
+        message: 'Please verify your email first before resetting your password.'
+      });
+    }
+
+    // Generate 6-digit OTP
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
+    console.log('Generated OTP for user:', user.id, 'OTP:', otpCode);
+
+    // Save OTP to database
+    await pool.query(
+      `INSERT INTO otps (user_id, email, otp_code, expires_at, is_verified)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [user.id, email, otpCode, expiresAt, false]
+    );
+    console.log('OTP saved to database');
+
+    // Send password reset OTP email
+    console.log('Attempting to send password reset email...');
+    try {
+      await sendPasswordResetEmail(email, otpCode, user.full_name);
+      console.log('Password reset email sent successfully');
+      res.json({
+        success: true,
+        message: 'Password reset OTP has been sent to your email. Please check your inbox.'
+      });
+    } catch (emailError) {
+      console.error('Error sending password reset email:', emailError);
+      res.status(500).json({
+        error: 'Failed to send password reset email. Please try again later.'
+      });
+    }
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/**
+ * Reset Password - Reset password using OTP
+ * Verifies the OTP and updates the user's password
+ */
+const resetPassword = async (req, res) => {
+  try {
+    const { email, otp, newPassword } = req.body;
+
+    // Validate required fields
+    if (!email || !otp || !newPassword) {
+      return res.status(400).json({
+        error: 'Email, OTP, and newPassword are required'
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+
+    // Validate password length
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        error: 'Password must be at least 6 characters long'
+      });
+    }
+
+    // Find the most recent unverified password reset OTP for this email
+    const otpResult = await pool.query(
+      `SELECT o.*, u.id as user_id, u.full_name, u.is_active
+       FROM otps o
+       JOIN users u ON o.user_id = u.id
+       WHERE o.email = $1 
+         AND o.is_verified = false
+         AND o.expires_at > NOW()
+       ORDER BY o.created_at DESC
+       LIMIT 1`,
+      [email]
+    );
+
+    if (otpResult.rows.length === 0) {
+      return res.status(400).json({
+        error: 'Invalid or expired OTP. Please request a new password reset.'
+      });
+    }
+
+    const otpRecord = otpResult.rows[0];
+
+    // Verify OTP code
+    if (otpRecord.otp_code !== otp) {
+      return res.status(400).json({ error: 'Invalid OTP code' });
+    }
+
+    // Check if user account is active
+    if (!otpRecord.is_active) {
+      return res.status(403).json({
+        error: 'Account not verified',
+        message: 'Please verify your email first before resetting your password.'
+      });
+    }
+
+    // Start transaction
+    await pool.query('BEGIN');
+
+    try {
+      // Hash new password
+      const saltRounds = 10;
+      const passwordHash = await bcrypt.hash(newPassword, saltRounds);
+
+      // Update user password
+      await pool.query(
+        'UPDATE users SET password_hash = $1 WHERE id = $2',
+        [passwordHash, otpRecord.user_id]
+      );
+
+      // Mark OTP as verified
+      await pool.query(
+        `UPDATE otps 
+         SET is_verified = true, verified_at = NOW()
+         WHERE id = $1`,
+        [otpRecord.id]
+      );
+
+      // Invalidate all other unverified OTPs for this user (security measure)
+      await pool.query(
+        `UPDATE otps 
+         SET is_verified = true
+         WHERE user_id = $1 AND is_verified = false AND id != $2`,
+        [otpRecord.user_id, otpRecord.id]
+      );
+
+      await pool.query('COMMIT');
+
+      res.json({
+        success: true,
+        message: 'Password has been reset successfully. You can now login with your new password.'
+      });
+    } catch (error) {
+      await pool.query('ROLLBACK');
+      throw error;
+    }
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 module.exports = {
   signup,
   verifyOtp,
@@ -1196,5 +1388,7 @@ module.exports = {
   verifyInvestorProfile,
   createInstitutionalProfile,
   getInstitutionalProfile,
-  verifyInstitutionalProfile
+  verifyInstitutionalProfile,
+  forgotPassword,
+  resetPassword
 };

@@ -478,12 +478,14 @@ const deleteUser = async (req, res) => {
 };
 
 /**
- * Bulk Approve/Deny Investors - Approve or deny multiple investors' profiles
+ * Bulk Approve/Deny Users - Approve or deny multiple users' profiles (investors or sellers)
  * Accepts an array of user IDs with actions (true = approve, false = deny)
- * Updates both investor_profiles and institutional_profiles
+ * Automatically detects user type and updates appropriate profiles:
+ * - For investors: Updates institutional_profiles and investor_profiles
+ * - For sellers: Updates company_profiles
  * Body: { approvals: [{ userId: UUID, action: boolean }, ...] }
  */
-const bulkApproveInvestors = async (req, res) => {
+const bulkApproveUsers = async (req, res) => {
   try {
     const { approvals } = req.body;
 
@@ -528,41 +530,96 @@ const bulkApproveInvestors = async (req, res) => {
         const isVerified = action === true || action === 1 || action === 'true' || action === '1';
         
         try {
-          // Update institutional_profiles (required for investors with complete data)
-          const institutionalUpdateResult = await pool.query(
-            `UPDATE institutional_profiles 
-             SET is_verified = $1, 
-                 verified_by = $2,
-                 verified_at = CASE WHEN $1 = true THEN NOW() ELSE NULL END
-             WHERE user_id = $3
-             RETURNING id, user_id, is_verified`,
-            [isVerified, verifierId, userId]
+          // Detect user type by checking their roles
+          const userRolesResult = await pool.query(
+            `SELECT r.name 
+             FROM user_roles ur
+             JOIN roles r ON ur.role_id = r.id
+             WHERE ur.user_id = $1`,
+            [userId]
           );
 
-          // Update investor_profiles (if exists)
-          const investorUpdateResult = await pool.query(
-            `UPDATE investor_profiles 
-             SET is_verified = $1, 
-                 verified_by = $2,
-                 verified_at = CASE WHEN $1 = true THEN NOW() ELSE NULL END
-             WHERE user_id = $3
-             RETURNING id, user_id, is_verified`,
-            [isVerified, verifierId, userId]
-          );
+          const userRoles = userRolesResult.rows.map(row => row.name);
+          const isInvestor = userRoles.includes('investor');
+          const isSeller = userRoles.includes('seller');
 
-          // Check if at least one profile was updated
-          if (institutionalUpdateResult.rows.length === 0 && investorUpdateResult.rows.length === 0) {
+          let profileUpdates = {
+            userId,
+            action: isVerified,
+            userType: null,
+            profilesUpdated: {}
+          };
+
+          // Update profiles based on user type
+          if (isInvestor) {
+            profileUpdates.userType = 'investor';
+            
+            // Update institutional_profiles (required for investors)
+            const institutionalUpdateResult = await pool.query(
+              `UPDATE institutional_profiles 
+               SET is_verified = $1, 
+                   verified_by = $2,
+                   verified_at = CASE WHEN $1 = true THEN NOW() ELSE NULL END
+               WHERE user_id = $3
+               RETURNING id, user_id, is_verified`,
+              [isVerified, verifierId, userId]
+            );
+
+            // Update investor_profiles (if exists)
+            const investorUpdateResult = await pool.query(
+              `UPDATE investor_profiles 
+               SET is_verified = $1, 
+                   verified_by = $2,
+                   verified_at = CASE WHEN $1 = true THEN NOW() ELSE NULL END
+               WHERE user_id = $3
+               RETURNING id, user_id, is_verified`,
+              [isVerified, verifierId, userId]
+            );
+
+            profileUpdates.profilesUpdated.institutionalProfile = institutionalUpdateResult.rows.length > 0;
+            profileUpdates.profilesUpdated.investorProfile = investorUpdateResult.rows.length > 0;
+
+            // Check if at least one profile was updated
+            if (institutionalUpdateResult.rows.length === 0 && investorUpdateResult.rows.length === 0) {
+              results.notFound.push({
+                ...profileUpdates,
+                reason: 'No investor profiles found for this user'
+              });
+            } else {
+              results.successful.push(profileUpdates);
+            }
+          } else if (isSeller) {
+            profileUpdates.userType = 'seller';
+            
+            // Update company_profiles (required for sellers)
+            const companyUpdateResult = await pool.query(
+              `UPDATE company_profiles 
+               SET is_verified = $1, 
+                   verified_by = $2,
+                   verified_at = CASE WHEN $1 = true THEN NOW() ELSE NULL END
+               WHERE user_id = $3
+               RETURNING id, user_id, is_verified`,
+              [isVerified, verifierId, userId]
+            );
+
+            profileUpdates.profilesUpdated.companyProfile = companyUpdateResult.rows.length > 0;
+
+            // Check if profile was updated
+            if (companyUpdateResult.rows.length === 0) {
+              results.notFound.push({
+                ...profileUpdates,
+                reason: 'No company profile found for this seller'
+              });
+            } else {
+              results.successful.push(profileUpdates);
+            }
+          } else {
+            // User is neither investor nor seller
             results.notFound.push({
               userId,
               action: isVerified,
-              reason: 'No profiles found for this user'
-            });
-          } else {
-            results.successful.push({
-              userId,
-              action: isVerified,
-              institutionalProfileUpdated: institutionalUpdateResult.rows.length > 0,
-              investorProfileUpdated: investorUpdateResult.rows.length > 0
+              userType: userRoles.join(', ') || 'unknown',
+              reason: 'User is not an investor or seller'
             });
           }
         } catch (error) {
@@ -597,7 +654,7 @@ const bulkApproveInvestors = async (req, res) => {
       throw error;
     }
   } catch (error) {
-    console.error('Bulk approve investors error:', error);
+    console.error('Bulk approve users error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
@@ -606,6 +663,6 @@ module.exports = {
   getUserManagement,
   getInvestors,
   deleteUser,
-  bulkApproveInvestors
+  bulkApproveUsers
 };
 
