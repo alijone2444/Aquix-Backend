@@ -1007,6 +1007,7 @@ const createInstitutionalProfile = async (req, res) => {
       additionalMessage,
       ndaConsent
     } = req.body;
+    console.log(req.body);
 
     // Validate required fields
     if (!fullName || !companyFundName) {

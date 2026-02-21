@@ -1,13 +1,20 @@
 const express = require('express');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/authorize');
-const { getUserManagement, getInvestors, deleteUser, bulkApproveUsers } = require('../controllers/adminController');
+const { getUserManagement, getInvestors, deleteUser, bulkApproveUsers, getDashboardStats } = require('../controllers/adminController');
 
 const router = express.Router();
 
 // All admin routes require authentication and admin/superadmin role
 router.use(authenticate);
 router.use(requireRole(['admin', 'superadmin']));
+
+/**
+ * GET /api/admin/dashboard
+ * Dashboard stats (key-value). More stats can be added from other data later.
+ * Returns: activeSellersThisMonth, investorsApprovedThisMonth, pendingVerifications, activeSubscriptions
+ */
+router.get('/dashboard', getDashboardStats);
 
 /**
  * GET /api/admin/user-management
@@ -28,10 +35,11 @@ router.get('/investors', getInvestors);
  * Automatically detects user type and updates appropriate profiles
  * Body: { 
  *   approvals: [
- *     { userId: UUID, action: true/false or 1/0 },
+ *     { userId: UUID, action: true/false or 1/0, reason?: string },
  *     ...
  *   ]
  * }
+ * When denying (action: false), optional reason is stored; if omitted, a default message is used.
  * - action: true or 1 = approve (set is_verified = true)
  * - action: false or 0 = deny (set is_verified = false)
  * 

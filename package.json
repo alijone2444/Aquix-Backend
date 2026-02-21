@@ -9,6 +9,7 @@
     "db:seed:rbac": "node src/scripts/seedRbac.js",
     "db:seed:superadmin": "node src/scripts/seedSuperadmin.js",
     "db:seed:financials": "node src/scripts/seedFinancialDataFreeAndStandard.js",
+    "db:migrate": "node src/scripts/runMigration.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

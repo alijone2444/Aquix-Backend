@@ -15,6 +15,7 @@ const getUserManagement = async (req, res) => {
         u.email as user_email,
         u.company as user_company,
         u.is_active as user_is_active,
+        u.rejection_reason as user_rejection_reason,
         u.created_at as user_created_at,
         u.updated_at as user_updated_at
       FROM users u
@@ -32,6 +33,7 @@ const getUserManagement = async (req, res) => {
         u.email as user_email,
         u.company as user_company,
         u.is_active as user_is_active,
+        u.rejection_reason as user_rejection_reason,
         u.created_at as user_created_at,
         u.updated_at as user_updated_at
       FROM users u
@@ -157,6 +159,7 @@ const getUserManagement = async (req, res) => {
           email: row.user_email,
           company: row.user_company,
           isActive: row.user_is_active,
+          rejectionReason: row.user_rejection_reason ?? null,
           profileImageUrl: null, // Optional field - column doesn't exist yet
           createdAt: row.user_created_at,
           updatedAt: row.user_updated_at
@@ -175,6 +178,7 @@ const getUserManagement = async (req, res) => {
           email: row.user_email,
           company: row.user_company,
           isActive: row.user_is_active,
+          rejectionReason: row.user_rejection_reason ?? null,
           profileImageUrl: null, // Optional field - column doesn't exist yet
           createdAt: row.user_created_at,
           updatedAt: row.user_updated_at
@@ -218,6 +222,7 @@ const getInvestors = async (req, res) => {
         u.email as user_email,
         u.company as user_company,
         u.is_active as user_is_active,
+        u.rejection_reason as user_rejection_reason,
         u.created_at as user_created_at,
         u.updated_at as user_updated_at
       FROM institutional_profiles inst
@@ -266,6 +271,7 @@ const getInvestors = async (req, res) => {
           email: row.user_email,
           company: row.user_company,
           isActive: row.user_is_active,
+          rejectionReason: row.user_rejection_reason ?? null,
           profileImageUrl: null, // Optional field - column doesn't exist yet
           createdAt: row.user_created_at,
           updatedAt: row.user_updated_at
@@ -483,8 +489,11 @@ const deleteUser = async (req, res) => {
  * Automatically detects user type and updates appropriate profiles:
  * - For investors: Updates institutional_profiles and investor_profiles
  * - For sellers: Updates company_profiles
- * Body: { approvals: [{ userId: UUID, action: boolean }, ...] }
+ * Body: { approvals: [{ userId: UUID, action: boolean, reason?: string }, ...] }
+ * When action is false (deny), optional reason is stored; if not provided, a default message is used.
  */
+const DEFAULT_REJECTION_REASON = 'Profile verification was denied. Please review the requirements and resubmit.';
+
 const bulkApproveUsers = async (req, res) => {
   try {
     const { approvals } = req.body;
@@ -524,10 +533,14 @@ const bulkApproveUsers = async (req, res) => {
 
     try {
       for (const approval of approvals) {
-        const { userId, action } = approval;
+        const { userId, action, reason } = approval;
         
         // Convert action to boolean (handle 1/0, true/false, "true"/"false")
         const isVerified = action === true || action === 1 || action === 'true' || action === '1';
+        // When denying, use provided reason or default (trim empty string to default)
+        const rejectionReason = !isVerified
+          ? (typeof reason === 'string' && reason.trim() ? reason.trim() : DEFAULT_REJECTION_REASON)
+          : null;
         
         try {
           // Detect user type by checking their roles
@@ -542,6 +555,12 @@ const bulkApproveUsers = async (req, res) => {
           const userRoles = userRolesResult.rows.map(row => row.name);
           const isInvestor = userRoles.includes('investor');
           const isSeller = userRoles.includes('seller');
+
+          // Store rejection reason on user (works even when no profile row exists)
+          await pool.query(
+            'UPDATE users SET rejection_reason = $1 WHERE id = $2',
+            [rejectionReason, userId]
+          );
 
           let profileUpdates = {
             userId,
@@ -579,8 +598,9 @@ const bulkApproveUsers = async (req, res) => {
             profileUpdates.profilesUpdated.institutionalProfile = institutionalUpdateResult.rows.length > 0;
             profileUpdates.profilesUpdated.investorProfile = investorUpdateResult.rows.length > 0;
 
-            // Check if at least one profile was updated
-            if (institutionalUpdateResult.rows.length === 0 && investorUpdateResult.rows.length === 0) {
+            // When denying: reason is stored on user, so success even if no profile row. When approving: need a profile to approve.
+            const noProfileUpdated = institutionalUpdateResult.rows.length === 0 && investorUpdateResult.rows.length === 0;
+            if (noProfileUpdated && isVerified) {
               results.notFound.push({
                 ...profileUpdates,
                 reason: 'No investor profiles found for this user'
@@ -591,7 +611,7 @@ const bulkApproveUsers = async (req, res) => {
           } else if (isSeller) {
             profileUpdates.userType = 'seller';
             
-            // Update company_profiles (required for sellers)
+            // Update company_profiles (if row exists)
             const companyUpdateResult = await pool.query(
               `UPDATE company_profiles 
                SET is_verified = $1, 
@@ -604,8 +624,8 @@ const bulkApproveUsers = async (req, res) => {
 
             profileUpdates.profilesUpdated.companyProfile = companyUpdateResult.rows.length > 0;
 
-            // Check if profile was updated
-            if (companyUpdateResult.rows.length === 0) {
+            // When denying: reason is stored on user, so success even if no company profile row. When approving: need a profile to approve.
+            if (companyUpdateResult.rows.length === 0 && isVerified) {
               results.notFound.push({
                 ...profileUpdates,
                 reason: 'No company profile found for this seller'
@@ -659,10 +679,70 @@ const bulkApproveUsers = async (req, res) => {
   }
 };
 
+/**
+ * Get Dashboard Stats - Returns key-value stats for admin dashboard
+ * Structure allows adding more stats from other data sources in the future
+ */
+const getDashboardStats = async (req, res) => {
+  try {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // Active Sellers This month: users with seller role, is_active, created this month
+    const activeSellersResult = await pool.query(
+      `SELECT COUNT(DISTINCT u.id)::int as count
+       FROM users u
+       JOIN user_roles ur ON u.id = ur.user_id
+       JOIN roles r ON ur.role_id = r.id
+       WHERE r.name = 'seller' AND u.is_active = true AND u.created_at >= $1`,
+      [startOfMonth]
+    );
+
+    // Investors Approved This month: institutional_profiles verified this month
+    const investorsApprovedResult = await pool.query(
+      `SELECT COUNT(*)::int as count
+       FROM institutional_profiles
+       WHERE is_verified = true AND verified_at >= $1`,
+      [startOfMonth]
+    );
+
+    // Pending Verifications: company_profiles + institutional_profiles not verified
+    const pendingCompanyResult = await pool.query(
+      `SELECT COUNT(*)::int as count FROM company_profiles WHERE is_verified = false`
+    );
+    const pendingInstitutionalResult = await pool.query(
+      `SELECT COUNT(*)::int as count FROM institutional_profiles WHERE is_verified = false`
+    );
+    const pendingVerifications =
+      (pendingCompanyResult.rows[0]?.count || 0) + (pendingInstitutionalResult.rows[0]?.count || 0);
+
+    // Active Subscriptions: placeholder for now (future: subscriptions table)
+    const activeSubscriptions = 0;
+
+    const stats = {
+      activeSellersThisMonth: activeSellersResult.rows[0]?.count ?? 0,
+      investorsApprovedThisMonth: investorsApprovedResult.rows[0]?.count ?? 0,
+      pendingVerifications,
+      activeSubscriptions
+    };
+
+    res.json({
+      success: true,
+      data: {
+        stats
+      }
+    });
+  } catch (error) {
+    console.error('Dashboard stats error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 module.exports = {
   getUserManagement,
   getInvestors,
   deleteUser,
-  bulkApproveUsers
+  bulkApproveUsers,
+  getDashboardStats
 };
 

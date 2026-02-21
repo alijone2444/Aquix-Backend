@@ -14,7 +14,7 @@ const getUserProfile = async (req, res) => {
     // Get complete user data with roles and permissions
     const userResult = await pool.query(
       `SELECT 
-        u.id, u.full_name, u.email, u.company, u.is_active,
+        u.id, u.full_name, u.email, u.company, u.is_active, u.rejection_reason,
         u.created_at, u.updated_at,
         COALESCE(
           json_agg(DISTINCT jsonb_build_object(
@@ -39,7 +39,7 @@ const getUserProfile = async (req, res) => {
       LEFT JOIN role_permissions rp ON r.id = rp.role_id
       LEFT JOIN permissions p ON rp.permission_id = p.id
       WHERE u.id = $1
-      GROUP BY u.id, u.full_name, u.email, u.company, u.is_active, u.created_at, u.updated_at`,
+      GROUP BY u.id, u.full_name, u.email, u.company, u.is_active, u.rejection_reason, u.created_at, u.updated_at`,
       [userId]
     );
 
@@ -57,6 +57,7 @@ const getUserProfile = async (req, res) => {
         email: user.email,
         company: user.company,
         isActive: user.is_active,
+        rejectionReason: user.rejection_reason ?? null,
         profileImageUrl: null, // Optional field - column doesn't exist yet
         createdAt: user.created_at,
         updatedAt: user.updated_at,
