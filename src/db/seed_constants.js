@@ -5,7 +5,7 @@ const { Client } = require('pg');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 
 // CONFIGURATION
-const FILE_PATH = "C:/Users/hassa/Downloads/2. Standard Version dataset_Jay's inputs_60 dataset.xlsx";
+const FILE_PATH = "/Users/afnanhassan/Downloads/2.\ Standard\ Version\ dataset_Jay\'s\ inputs_60\ dataset_V3.xlsx";
 const SHEET_NAME = "Reference Data sheet";
 
 /**
